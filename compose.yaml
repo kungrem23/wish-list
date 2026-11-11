@@ -1,0 +1,101 @@
+x-backend-environment: &backend-environment
+  DATABASE_URL: postgresql://wishlist@db:5432/wishlist?sslmode=disable
+  PGPASSWORD: ${POSTGRES_PASSWORD:-wishlist-local-db}
+  S3_ENDPOINT: http://s3:8333
+  S3_BUCKET: ${S3_BUCKET:-wishlist-photos}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-wishlist-local}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-wishlist-local-s3}
+
+x-backend-dependencies: &backend-dependencies
+  migrate:
+    condition: service_completed_successfully
+  s3:
+    condition: service_healthy
+
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: wishlist
+      POSTGRES_DB: wishlist
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wishlist-local-db}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "wishlist", "-d", "wishlist"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  migrate:
+    image: postgres:18-alpine
+    entrypoint: ["/bin/sh", "/migrate.sh"]
+    environment:
+      PGHOST: db
+      PGUSER: wishlist
+      PGDATABASE: wishlist
+      PGPASSWORD: ${POSTGRES_PASSWORD:-wishlist-local-db}
+    volumes:
+      - ./migrations:/migrations:ro
+      - ./docker/migrate.sh:/migrate.sh:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  s3:
+    image: chrislusf/seaweedfs:4.53
+    environment:
+      S3_BUCKET: ${S3_BUCKET:-wishlist-photos}
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-wishlist-local}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-wishlist-local-s3}
+    volumes:
+      - s3-data:/data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "-w", "2", "127.0.0.1", "8333"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      target: api
+    environment:
+      <<: *backend-environment
+      HTTP_ADDR: ":8080"
+      COOKIE_SECURE: "false"
+    depends_on: *backend-dependencies
+    healthcheck:
+      test: ["CMD", "nc", "-z", "-w", "2", "127.0.0.1", "8080"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+  archive:
+    build:
+      context: .
+      target: archive
+    environment: *backend-environment
+    depends_on: *backend-dependencies
+    restart: unless-stopped
+
+  web:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:${WISHLIST_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  s3-data:
