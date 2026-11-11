@@ -37,12 +37,16 @@ type photoReference struct {
 	URL string `json:"url"`
 }
 
-func photoReferences(listPath string, gift wishlists.Gift) []photoReference {
+func photoReferences(giftPath string, ids []string) []photoReference {
 	var result []photoReference
-	for _, id := range gift.PhotoIDs {
-		result = append(result, photoReference{id, listPath + "/gifts/" + strconv.FormatInt(gift.ID, 10) + "/photos/" + id})
+	for _, id := range ids {
+		result = append(result, photoReference{id, giftPath + "/photos/" + id})
 	}
 	return result
+}
+
+func activityPhotoReferences(giftID int64, ids []string) []photoReference {
+	return photoReferences("/api/v1/activity/gifts/"+strconv.FormatInt(giftID, 10), ids)
 }
 
 func validPhotoID(id string) bool {
@@ -158,6 +162,21 @@ func (a api) giftPhoto(w http.ResponseWriter, r *http.Request, userID int64) err
 		err = a.wishlists.OwnGiftPhoto(r.Context(), userID, listID, giftID, photoID)
 	}
 	if err != nil {
+		return err
+	}
+	return a.streamPhoto(w, r, photoID)
+}
+
+func (a api) activityGiftPhoto(w http.ResponseWriter, r *http.Request, userID int64) error {
+	giftID, err := pathID(r, "gift")
+	if err != nil {
+		return err
+	}
+	photoID := r.PathValue("photo")
+	if !validPhotoID(photoID) {
+		return errPhotoNotFound
+	}
+	if err := a.wishlists.ActivityGiftPhoto(r.Context(), userID, giftID, photoID); err != nil {
 		return err
 	}
 	return a.streamPhoto(w, r, photoID)

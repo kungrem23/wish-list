@@ -462,7 +462,7 @@ button.icon-button { flex: none; width: 44px; height: 44px; padding: 0; }
 }
 .gift-art { position: relative; display: grid; place-items: center; aspect-ratio: 1.75; overflow: hidden; }
 .gift-art img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.gift-art .gift-photo { position: absolute; inset: 0; object-fit: contain; background: #181818; }
+.gift-art .gift-photo, .activity-art .gift-photo { position: absolute; inset: 0; object-fit: contain; background: #181818; }
 .photo-controls {
   position: absolute;
   right: .6rem;
@@ -530,6 +530,7 @@ button.icon-button { flex: none; width: 44px; height: 44px; padding: 0; }
 }
 .activity-row + .activity-row { border-top: 1px solid #393939; }
 .activity-art {
+  position: relative;
   display: grid;
   place-items: center;
   width: clamp(72px, 8.45vw, 132px);

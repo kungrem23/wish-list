@@ -15,6 +15,7 @@ type Store struct {
 type Entry struct {
 	GiftID     int64     `json:"gift_id,string"`
 	GiftTitle  string    `json:"gift_title"`
+	PhotoIDs   []string  `json:"-"`
 	Wishlist   string    `json:"wishlist_title"`
 	Recipient  string    `json:"recipient"`
 	ReservedAt time.Time `json:"reserved_at"`
@@ -34,7 +35,7 @@ func RecordReservations(ctx context.Context, tx pgx.Tx, wishlistID int64) error 
 func (s Store) List(ctx context.Context, userID int64, before *time.Time, after int64, limit int) ([]Entry, error) {
 	// Gift outcomes belong to wishlists. Read the current outcome on every request.
 	rows, err := s.DB.Query(ctx, `
-		SELECT h.gift_id, g.title, w.title, u.display_name, h.reserved_at, g.gifted
+		SELECT h.gift_id, g.title, w.title, u.display_name, h.reserved_at, g.gifted, g.photo_ids
 		FROM gift_history h
 		JOIN gifts g ON g.id = h.gift_id
 		JOIN wishlists w ON w.id = g.wishlist_id
@@ -48,7 +49,7 @@ func (s Store) List(ctx context.Context, userID int64, before *time.Time, after 
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Entry, error) {
 		var entry Entry
-		err := row.Scan(&entry.GiftID, &entry.GiftTitle, &entry.Wishlist, &entry.Recipient, &entry.ReservedAt, &entry.Gifted)
+		err := row.Scan(&entry.GiftID, &entry.GiftTitle, &entry.Wishlist, &entry.Recipient, &entry.ReservedAt, &entry.Gifted, &entry.PhotoIDs)
 		return entry, err
 	})
 }

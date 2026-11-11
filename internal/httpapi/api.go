@@ -80,6 +80,7 @@ func HandlerWithPhotos(db *pgxpool.Pool, secureCookies bool, trustedProxy netip.
 	mux.Handle("DELETE /api/v1/shared/{token}/gifts/{gift}/reservation", a.private(a.cancel))
 	mux.Handle("GET /api/v1/shared/{token}/gifts/{gift}/photos/{photo}", a.private(a.giftPhoto))
 	mux.Handle("GET /api/v1/reservations", a.private(a.bookings))
+	mux.Handle("GET /api/v1/activity/gifts/{gift}/photos/{photo}", a.private(a.activityGiftPhoto))
 	mux.Handle("DELETE /api/v1/reservations/{gift}", a.private(a.cancelBooking))
 	mux.Handle("GET /api/v1/history", a.private(a.listHistory))
 	mux.Handle("DELETE /api/v1/history/{gift}", a.private(a.deleteHistory))

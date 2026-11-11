@@ -18,6 +18,22 @@ func (s Store) SharedGiftPhoto(ctx context.Context, userID, giftID int64, photoI
 	return giftPhoto(ctx, s.DB, userID, giftID, photoID, "w.share_token = $4", token)
 }
 
+// ActivityGiftPhoto preserves photo access through the reservation-to-history transition.
+func (s Store) ActivityGiftPhoto(ctx context.Context, userID, giftID int64, photoID string) error {
+	var visible bool
+	err := s.DB.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM gifts g WHERE g.id = $2 AND $3 = ANY(g.photo_ids)
+			AND (EXISTS (SELECT 1 FROM reservations r WHERE r.gift_id = g.id AND r.user_id = $1)
+			  OR EXISTS (SELECT 1 FROM gift_history h WHERE h.gift_id = g.id AND h.user_id = $1))
+		)
+	`, userID, giftID, photoID).Scan(&visible)
+	if err == nil && !visible {
+		return errNotFound
+	}
+	return err
+}
+
 func CheckGuestGiftPhoto(ctx context.Context, tx pgx.Tx, userID, listID, giftID int64, photoID string) error {
 	return giftPhoto(ctx, tx, userID, giftID, photoID, "w.id = $4", listID)
 }

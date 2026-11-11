@@ -95,7 +95,7 @@ func giftPage(w http.ResponseWriter, path string, gifts []wishlists.Gift, cursor
 	gifts = page(w, gifts, cursor.Next)
 	result := make([]giftWithPhotos, 0, len(gifts))
 	for _, gift := range gifts {
-		result = append(result, giftWithPhotos{Gift: gift, Photos: photoReferences(path, gift)})
+		result = append(result, giftWithPhotos{Gift: gift, Photos: photoReferences(path+"/gifts/"+strconv.FormatInt(gift.ID, 10), gift.PhotoIDs)})
 	}
 	return result
 }
@@ -225,9 +225,18 @@ func (a api) bookings(w http.ResponseWriter, r *http.Request, userID int64) erro
 	if err != nil {
 		return err
 	}
-	return writeJSON(w, http.StatusOK, page(w, bookings, func(booking wishlists.Booking) activityCursor {
+	bookings = page(w, bookings, func(booking wishlists.Booking) activityCursor {
 		return activityCursor{At: &booking.ReservedAt, ID: booking.GiftID}
-	}))
+	})
+	type bookingWithPhotos struct {
+		wishlists.Booking
+		Photos []photoReference `json:"photos,omitempty"`
+	}
+	result := make([]bookingWithPhotos, 0, len(bookings))
+	for _, booking := range bookings {
+		result = append(result, bookingWithPhotos{booking, activityPhotoReferences(booking.GiftID, booking.PhotoIDs)})
+	}
+	return writeJSON(w, http.StatusOK, result)
 }
 
 func (a api) listHistory(w http.ResponseWriter, r *http.Request, userID int64) error {
@@ -239,9 +248,18 @@ func (a api) listHistory(w http.ResponseWriter, r *http.Request, userID int64) e
 	if err != nil {
 		return err
 	}
-	return writeJSON(w, http.StatusOK, page(w, entries, func(entry history.Entry) activityCursor {
+	entries = page(w, entries, func(entry history.Entry) activityCursor {
 		return activityCursor{At: &entry.ReservedAt, ID: entry.GiftID}
-	}))
+	})
+	type entryWithPhotos struct {
+		history.Entry
+		Photos []photoReference `json:"photos,omitempty"`
+	}
+	result := make([]entryWithPhotos, 0, len(entries))
+	for _, entry := range entries {
+		result = append(result, entryWithPhotos{entry, activityPhotoReferences(entry.GiftID, entry.PhotoIDs)})
+	}
+	return writeJSON(w, http.StatusOK, result)
 }
 
 func (a api) deleteHistory(w http.ResponseWriter, r *http.Request, userID int64) error {

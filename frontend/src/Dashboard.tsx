@@ -3,8 +3,9 @@ import type { ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { cancelBookingPath, ownerPath, request, requestPage, sharePath } from './api'
 import type { Booking, HistoryEntry, Summary } from './api'
+import { GiftImages } from './GiftCard'
 import { Alert, DetailsForm, formatDate, formatGiftCount, formatInstant, Modal, PageButtons, PageStatus, phaseLabels, useAction, usePagedResource, useResource } from './ui'
-import { GiftArt, Icon, OccasionArt } from './visuals'
+import { Icon, OccasionArt } from './visuals'
 
 const shortMonth = new Intl.DateTimeFormat('ru', { month: 'short', timeZone: 'UTC' })
 
@@ -122,7 +123,7 @@ function ActivityRow({ entry, list, children }: {
   children: ReactNode
 }) {
   return <li className="activity-row">
-    <div className="activity-art"><GiftArt title={entry.gift_title} view="booking" /></div>
+    <GiftImages gift={{ title: entry.gift_title, photos: entry.photos }} view="booking" className="activity-art" />
     <div className="activity-copy">
       <h2>{entry.gift_title}</h2>
       <p className="muted" title={`Бронь от ${formatInstant(entry.reserved_at)}`}>{entry.recipient} · {list}</p>

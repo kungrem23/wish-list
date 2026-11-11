@@ -67,6 +67,7 @@ func ReadGuestView(ctx context.Context, tx pgx.Tx, userID, listID int64, cursor 
 type Booking struct {
 	GiftID     int64     `json:"gift_id,string"`
 	GiftTitle  string    `json:"gift_title"`
+	PhotoIDs   []string  `json:"-"`
 	Wishlist   string    `json:"wishlist_title"`
 	Recipient  string    `json:"recipient"`
 	ShareToken string    `json:"share_token,omitempty"`
@@ -217,7 +218,7 @@ func (s Store) Bookings(ctx context.Context, userID int64, before *time.Time, af
 	rows, err := s.DB.Query(ctx, `
 		SELECT g.id, g.title, w.title, u.display_name, CASE WHEN r.via_santa OR w.archived_at IS NOT NULL OR w.close_at <= statement_timestamp()
 		            THEN '' ELSE w.share_token END, r.reserved_at, g.active,
-		       w.archived_at IS NULL AND (w.close_at IS NULL OR statement_timestamp() < w.close_at)
+		       w.archived_at IS NULL AND (w.close_at IS NULL OR statement_timestamp() < w.close_at), g.photo_ids
 		FROM reservations r
 		JOIN gifts g ON g.id = r.gift_id
 		JOIN wishlists w ON w.id = g.wishlist_id
@@ -231,7 +232,7 @@ func (s Store) Bookings(ctx context.Context, userID int64, before *time.Time, af
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Booking, error) {
 		var b Booking
-		err := row.Scan(&b.GiftID, &b.GiftTitle, &b.Wishlist, &b.Recipient, &b.ShareToken, &b.ReservedAt, &b.Active, &b.CanCancel)
+		err := row.Scan(&b.GiftID, &b.GiftTitle, &b.Wishlist, &b.Recipient, &b.ShareToken, &b.ReservedAt, &b.Active, &b.CanCancel, &b.PhotoIDs)
 		return b, err
 	})
 }

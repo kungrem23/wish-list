@@ -52,13 +52,18 @@ export function GiftCard({ gift, view, menu, outcome, booking }: {
   </li>
 }
 
-function GiftImages({ gift, view, gallery = false }: { gift: Gift; view: GiftView; gallery?: boolean }) {
+export function GiftImages({ gift, view, gallery = false, className = 'gift-art' }: {
+  gift: Pick<Gift, 'title' | 'photos'>
+  view: GiftView | 'booking'
+  gallery?: boolean
+  className?: string
+}) {
   const [index, setIndex] = useState(0)
   const [failedPhoto, setFailedPhoto] = useState('')
   const photos = gift.photos ?? []
   const current = index % (photos.length || 1)
   const photo = photos[current]
-  return <div className="gift-art">
+  return <div className={className}>
     {photo && photo.url !== failedPhoto
       ? <img key={photo.id} className="gift-photo" src={photo.url} alt={gallery ? `Фото ${current + 1} подарка «${gift.title}»` : ''}
           loading={gallery ? 'eager' : 'lazy'} onError={() => setFailedPhoto(photo.url)} />

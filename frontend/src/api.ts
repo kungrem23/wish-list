@@ -85,6 +85,7 @@ export interface FriendProfile extends Person {
 interface GiftActivity {
   gift_id: string
   gift_title: string
+  photos?: GiftPhoto[]
   wishlist_title: string
   recipient: string
   reserved_at: string
