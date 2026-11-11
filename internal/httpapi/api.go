@@ -31,6 +31,8 @@ type api struct {
 	santa         santa.Store
 	photos        *photos.Store
 	authLimits    *authLimits
+	uploadLimits  *authAttemptLimit
+	uploadSlots   chan struct{}
 	secureCookies bool
 }
 
@@ -49,6 +51,8 @@ func HandlerWithPhotos(db *pgxpool.Pool, secureCookies bool, trustedProxy netip.
 	a := api{
 		accounts: accounts.Store{DB: db}, wishlists: wishlists.Store{DB: db},
 		history: history.Store{DB: db}, santa: santa.Store{DB: db}, photos: photoStore, authLimits: newAuthLimits(trustedProxy), secureCookies: secureCookies,
+		uploadLimits: &authAttemptLimit{attempts: 10, keys: make(map[string]authAttempts)},
+		uploadSlots:  make(chan struct{}, 4),
 	}
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/v1/register", respond(a.authLimits.byIP(a.register)))

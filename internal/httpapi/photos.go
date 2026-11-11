@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	_ "golang.org/x/image/webp"
 
 	"wishlist/internal/photos"
@@ -54,7 +55,29 @@ func validPhotoID(id string) bool {
 	return err == nil && len(id) == 43 && len(data) == 32
 }
 
-func (a api) saveGiftWithPhotos(w http.ResponseWriter, r *http.Request, userID, listID, giftID int64) error {
+func (a *api) beginPhotoUpload(w http.ResponseWriter, r *http.Request, userID int64) (func(), error) {
+	if err := r.Context().Err(); err != nil {
+		return nil, err
+	}
+	if wait := a.uploadLimits.take(strconv.FormatInt(userID, 10), time.Now()); wait > 0 {
+		setRetryAfter(w, wait)
+		return nil, problem.New(http.StatusTooManyRequests, "Слишком много загрузок. Повторите позже")
+	}
+	select {
+	case a.uploadSlots <- struct{}{}:
+		return func() { <-a.uploadSlots }, nil
+	default:
+		setRetryAfter(w, time.Second)
+		return nil, problem.New(http.StatusServiceUnavailable, "Загрузка фотографий временно занята")
+	}
+}
+
+func (a *api) saveGiftWithPhotos(w http.ResponseWriter, r *http.Request, userID, listID, giftID int64) error {
+	release, err := a.beginPhotoUpload(w, r, userID)
+	if err != nil {
+		return err
+	}
+	defer release()
 	r.Body = http.MaxBytesReader(w, r.Body, wishlists.MaxGiftPhotos*maxPhotoBytes+2*maxJSONBytes)
 	if err := r.ParseMultipartForm(512 << 10); err != nil {
 		var tooLarge *http.MaxBytesError
@@ -97,10 +120,17 @@ func (a api) saveGiftWithPhotos(w http.ResponseWriter, r *http.Request, userID, 
 			contentTypes = append(contentTypes, contentType)
 			changes.Add = append(changes.Add, platform.Token())
 		}
-		if err := a.wishlists.TrackPhotoUploads(r.Context(), changes.Add); err != nil {
-			return err
-		}
-		changes.Upload = func(ctx context.Context) error {
+		changes.Upload = func(ctx context.Context, tx pgx.Tx) error {
+			objects := make([]photos.UploadObject, len(files))
+			for i, file := range files {
+				objects[i] = photos.UploadObject{ID: changes.Add[i], Size: file.Size}
+			}
+			if err := photos.TrackUploads(ctx, a.wishlists.DB, userID, objects); err != nil {
+				return err
+			}
+			if err := photos.LockUploads(ctx, tx, changes.Add); err != nil {
+				return err
+			}
 			ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 			defer cancel()
 			for i, file := range files {
@@ -213,10 +243,15 @@ func (a api) streamPhoto(w http.ResponseWriter, r *http.Request, photoID string)
 	return nil
 }
 
-func (a api) uploadAvatar(w http.ResponseWriter, r *http.Request, attach func(string, func(context.Context) error) error) error {
+func (a *api) uploadAvatar(w http.ResponseWriter, r *http.Request, userID int64, attach func(string, photos.Upload) error) error {
 	if a.photos == nil {
 		return errPhotoUnavailable
 	}
+	release, err := a.beginPhotoUpload(w, r, userID)
+	if err != nil {
+		return err
+	}
+	defer release()
 	r.Body = http.MaxBytesReader(w, r.Body, maxPhotoBytes+maxJSONBytes)
 	if err := r.ParseMultipartForm(512 << 10); err != nil {
 		var tooLarge *http.MaxBytesError
@@ -236,10 +271,13 @@ func (a api) uploadAvatar(w http.ResponseWriter, r *http.Request, attach func(st
 		return err
 	}
 	id := platform.Token()
-	if err := a.wishlists.TrackPhotoUploads(r.Context(), []string{id}); err != nil {
-		return err
-	}
-	return attach(id, func(ctx context.Context) error {
+	return attach(id, func(ctx context.Context, tx pgx.Tx) error {
+		if err := photos.TrackUploads(ctx, a.wishlists.DB, userID, []photos.UploadObject{{ID: id, Size: file.Size}}); err != nil {
+			return err
+		}
+		if err := photos.LockUploads(ctx, tx, []string{id}); err != nil {
+			return err
+		}
 		ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 		defer cancel()
 		if err := a.uploadPhoto(ctx, id, contentType, file); err != nil {
@@ -266,7 +304,7 @@ func (a api) saveWishlistAvatar(w http.ResponseWriter, r *http.Request, userID i
 	if r.Method == http.MethodDelete {
 		return noContent(w, a.wishlists.SetAvatar(r.Context(), userID, id, nil, nil))
 	}
-	return noContent(w, a.uploadAvatar(w, r, func(photoID string, upload func(context.Context) error) error {
+	return noContent(w, a.uploadAvatar(w, r, userID, func(photoID string, upload photos.Upload) error {
 		return a.wishlists.SetAvatar(r.Context(), userID, id, &photoID, upload)
 	}))
 }

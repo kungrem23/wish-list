@@ -41,7 +41,7 @@ const MaxGiftPhotos = 5
 type PhotoChanges struct {
 	Add    []string
 	Remove []string
-	Upload func(context.Context) error
+	Upload photos.Upload
 }
 
 var pricePattern = regexp.MustCompile(`^[0-9]+(\.[0-9]{1,2})?$`)
@@ -118,9 +118,6 @@ func (s Store) SaveGiftWithPhotos(ctx context.Context, ownerID, listID, giftID i
 		if len(photoIDs) > MaxGiftPhotos {
 			return problem.New(http.StatusBadRequest, "На карточке может быть не больше 5 фотографий")
 		}
-		if err := photos.LockUploads(ctx, tx, changes.Add); err != nil {
-			return err
-		}
 		if giftID == 0 {
 			var full bool
 			err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM gifts WHERE wishlist_id = $1 OFFSET $2)`,
@@ -149,7 +146,7 @@ func (s Store) SaveGiftWithPhotos(ctx context.Context, ownerID, listID, giftID i
 			}
 		}
 		if changes.Upload != nil {
-			return changes.Upload(ctx)
+			return changes.Upload(ctx, tx)
 		}
 		return nil
 	})

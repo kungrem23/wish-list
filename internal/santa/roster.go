@@ -43,6 +43,31 @@ func (s Store) Apply(ctx context.Context, userID int64, token string) (int64, er
 			return err
 		}
 		id = e.id
+		var existing bool
+		if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM santa_applications WHERE event_id = $1 AND user_id = $2)", e.id, userID).Scan(&existing); err != nil {
+			return err
+		}
+		if existing {
+			return nil
+		}
+		// Lock the applicant before counting concurrent joins to different events.
+		var locked int64
+		if err := tx.QueryRow(ctx, "SELECT id FROM users WHERE id = $1 FOR NO KEY UPDATE", userID).Scan(&locked); err != nil {
+			return err
+		}
+		var full bool
+		if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM santa_applications WHERE user_id = $1 OFFSET 99)", userID).Scan(&full); err != nil {
+			return err
+		}
+		if full {
+			return problem.New(http.StatusConflict, "Достигнут лимит участия в 100 событиях, включая архив")
+		}
+		if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM santa_applications WHERE event_id = $1 OFFSET 199)", e.id).Scan(&full); err != nil {
+			return err
+		}
+		if full {
+			return problem.New(http.StatusConflict, "В событии уже 200 заявок")
+		}
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO santa_applications (event_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING
 		`, e.id, userID)

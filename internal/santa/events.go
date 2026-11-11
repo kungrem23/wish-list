@@ -84,13 +84,15 @@ type eventRow struct {
 }
 
 var (
-	errNotFound = problem.New(http.StatusNotFound, "Событие или приглашение не найдено")
-	errClosed   = problem.New(http.StatusConflict, "Событие уже в архиве")
-	errStale    = problem.New(http.StatusConflict, "Событие изменилось. Проверьте состав и попробуйте снова")
-	errRoster   = problem.New(http.StatusBadRequest, "Это действие недоступно для текущего статуса участника")
-	errBusy     = problem.New(http.StatusServiceUnavailable, "Событие временно занято. Повторите попытку")
-	budgetRE    = regexp.MustCompile(`^[0-9]{1,10}(\.[0-9]{1,2})?$`)
-	currencyRE  = regexp.MustCompile(`^[A-Z]{3}$`)
+	errEventQuota = problem.New(http.StatusConflict, "Достигнут лимит в 50 созданных событий, включая архив")
+	errEventRate  = problem.New(http.StatusTooManyRequests, "Не больше 5 новых событий в час. Повторите позже")
+	errNotFound   = problem.New(http.StatusNotFound, "Событие или приглашение не найдено")
+	errClosed     = problem.New(http.StatusConflict, "Событие уже в архиве")
+	errStale      = problem.New(http.StatusConflict, "Событие изменилось. Проверьте состав и попробуйте снова")
+	errRoster     = problem.New(http.StatusBadRequest, "Это действие недоступно для текущего статуса участника")
+	errBusy       = problem.New(http.StatusServiceUnavailable, "Событие временно занято. Повторите попытку")
+	budgetRE      = regexp.MustCompile(`^[0-9]{1,10}(\.[0-9]{1,2})?$`)
+	currencyRE    = regexp.MustCompile(`^[A-Z]{3}$`)
 )
 
 func inviteHash(token string) []byte {
@@ -175,6 +177,31 @@ func (s Store) Create(ctx context.Context, organizer int64, input CreateInput) (
 	}
 	result.Token = platform.Token()
 	err = s.write(ctx, func(tx pgx.Tx) error {
+		// Serialize quotas across all API processes and concurrent creates.
+		var locked int64
+		if err := tx.QueryRow(ctx, "SELECT id FROM users WHERE id = $1 FOR NO KEY UPDATE", organizer).Scan(&locked); err != nil {
+			return err
+		}
+		var count, recent int
+		if err := tx.QueryRow(ctx, `SELECT count(*), count(*) FILTER (WHERE created_at > statement_timestamp() - interval '1 hour')
+		    FROM santa_events WHERE organizer_id = $1`, organizer).Scan(&count, &recent); err != nil {
+			return err
+		}
+		if count >= 50 {
+			return errEventQuota
+		}
+		if recent >= 5 {
+			return errEventRate
+		}
+		if input.Participate {
+			var full bool
+			if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM santa_applications WHERE user_id = $1 OFFSET 99)", organizer).Scan(&full); err != nil {
+				return err
+			}
+			if full {
+				return problem.New(http.StatusConflict, "Достигнут лимит участия в 100 событиях, включая архив")
+			}
+		}
 		now, err := clock(ctx, tx)
 		if err != nil {
 			return err
@@ -218,13 +245,22 @@ func (e *Event) scan(row pgx.Row, extra ...any) error {
 	return row.Scan(append(fields, extra...)...)
 }
 
-func (s Store) List(ctx context.Context, userID int64) ([]Event, error) {
+type Cursor struct {
+	Closed bool
+	Date   string
+	ID     int64
+}
+
+func (s Store) List(ctx context.Context, userID int64, archived *bool, cursor Cursor, limit int) ([]Event, error) {
 	rows, err := s.DB.Query(ctx, `
 		SELECT `+eventFields+` FROM santa_events e
 		LEFT JOIN santa_applications a ON a.event_id = e.id AND a.user_id = $1
-		WHERE e.organizer_id = $1 OR a.user_id IS NOT NULL
+		WHERE (e.organizer_id = $1 OR a.user_id IS NOT NULL)
+		  AND ($2::boolean IS NULL OR (statement_timestamp() >= e.close_at) = $2)
+		  AND ($3::bigint = 0 OR (statement_timestamp() >= e.close_at, e.exchange_date, e.id) > ($4, $5::text::date, $3))
 		ORDER BY statement_timestamp() >= e.close_at, e.exchange_date, e.id
-	`, userID)
+		LIMIT $6
+	`, userID, archived, cursor.ID, cursor.Closed, emptyDate(cursor.Date), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -233,6 +269,13 @@ func (s Store) List(ctx context.Context, userID int64) ([]Event, error) {
 		err := e.scan(row)
 		return e, err
 	})
+}
+
+func emptyDate(date string) string {
+	if date == "" {
+		return "0001-01-01"
+	}
+	return date
 }
 
 func (s Store) Invitation(ctx context.Context, userID int64, token string) (Event, error) {

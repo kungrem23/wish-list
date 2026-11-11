@@ -1,6 +1,6 @@
 x-backend-environment: &backend-environment
-  DATABASE_URL: postgresql://wishlist@db:5432/wishlist?sslmode=disable
-  PGPASSWORD: ${POSTGRES_PASSWORD:-wishlist-local-db}
+  DATABASE_URL: postgresql://wishlist_app@db:5432/wishlist?sslmode=disable
+  PGPASSWORD: ${WISHLIST_DB_PASSWORD:-wishlist-local-app}
   S3_ENDPOINT: http://s3:8333
   S3_BUCKET: ${S3_BUCKET:-wishlist-photos}
   S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-wishlist-local}
@@ -36,9 +36,12 @@ services:
       PGUSER: wishlist
       PGDATABASE: wishlist
       PGPASSWORD: ${POSTGRES_PASSWORD:-wishlist-local-db}
+      WISHLIST_DB_PASSWORD: ${WISHLIST_DB_PASSWORD:-wishlist-local-app}
+      ARCHIVE_DB_PASSWORD: ${ARCHIVE_DB_PASSWORD:-wishlist-local-archive}
     volumes:
       - ./migrations:/migrations:ro
       - ./docker/migrate.sh:/migrate.sh:ro
+      - ./docker/roles.sql:/roles.sql:ro
     depends_on:
       db:
         condition: service_healthy
@@ -64,9 +67,15 @@ services:
       target: api
     environment:
       <<: *backend-environment
-      HTTP_ADDR: ":8080"
-      COOKIE_SECURE: "false"
-    depends_on: *backend-dependencies
+      HTTP_ADDR: "127.0.0.1:8080"
+      TRUSTED_PROXY_IP: "127.0.0.1"
+      COOKIE_SECURE: "true"
+    # Loopback is shared only with Nginx; no container-facing API port or dynamic proxy IP.
+    network_mode: "service:web"
+    depends_on:
+      <<: *backend-dependencies
+      web:
+        condition: service_started
     healthcheck:
       test: ["CMD", "nc", "-z", "-w", "2", "127.0.0.1", "8080"]
       interval: 2s
@@ -78,23 +87,33 @@ services:
     build:
       context: .
       target: archive
-    environment: *backend-environment
+    environment:
+      <<: *backend-environment
+      DATABASE_URL: postgresql://wishlist_archive@db:5432/wishlist?sslmode=disable
+      PGPASSWORD: ${ARCHIVE_DB_PASSWORD:-wishlist-local-archive}
     depends_on: *backend-dependencies
     restart: unless-stopped
 
   web:
     build: ./frontend
-    ports:
-      - "127.0.0.1:${WISHLIST_PORT:-8080}:80"
-    depends_on:
-      api:
-        condition: service_healthy
+    environment:
+      NGINX_TRUSTED_PROXY: ${CADDY_PROXY_IP:?Set CADDY_PROXY_IP to the Caddy container IP on CADDY_NETWORK}
+    networks:
+      default:
+      caddy:
+        aliases:
+          - wishlist-web
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/"]
       interval: 2s
       timeout: 3s
       retries: 15
     restart: unless-stopped
+
+networks:
+  caddy:
+    external: true
+    name: ${CADDY_NETWORK:?Set CADDY_NETWORK to an existing network of the Caddy container}
 
 volumes:
   postgres-data:

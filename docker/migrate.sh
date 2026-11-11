@@ -39,3 +39,6 @@ SQL
 done
 
 psql -X -v ON_ERROR_STOP=1 -f "$script"
+
+# Reapply grants after migrations, including upgrades of existing volumes.
+psql -X -v ON_ERROR_STOP=1 -f /roles.sql

@@ -81,16 +81,13 @@ func checkAvatar(ctx context.Context, db queryRower, photoID, predicate string, 
 	return err
 }
 
-func (s Store) SetAvatar(ctx context.Context, ownerID, listID int64, photoID *string, upload func(context.Context) error) error {
+func (s Store) SetAvatar(ctx context.Context, ownerID, listID int64, photoID *string, upload photos.Upload) error {
 	return s.withOwnedListLocked(ctx, ownerID, listID, func(tx pgx.Tx, l list, now time.Time) error {
 		if err := l.requireEditing(now); err != nil {
 			return err
 		}
 		if photoID != nil {
-			if err := photos.LockUploads(ctx, tx, []string{*photoID}); err != nil {
-				return err
-			}
-			if err := upload(ctx); err != nil {
+			if err := upload(ctx, tx); err != nil {
 				return err
 			}
 		}
@@ -99,67 +96,69 @@ func (s Store) SetAvatar(ctx context.Context, ownerID, listID int64, photoID *st
 	})
 }
 
-// TrackPhotoUploads records keys before any S3 write so an interrupted save can be cleaned up.
-func (s Store) TrackPhotoUploads(ctx context.Context, ids []string) error {
-	_, err := s.DB.Exec(ctx, `
-		INSERT INTO gift_photo_objects (id) SELECT unnest($1::text[])
-	`, ids)
-	return err
-}
-
 func (s Store) RemoveUnusedPhotos(ctx context.Context, remove func(context.Context, string) error) (int, error) {
 	// Allow saves to finish before considering a new object. Only new uploads can
 	// attach a previously unreferenced ID. Copies reuse IDs from immutable archived lists.
-	rows, err := s.DB.Query(ctx, `
-		SELECT p.id FROM gift_photo_objects p
-		WHERE p.created_at < statement_timestamp() - interval '1 hour'
-		  AND NOT EXISTS (SELECT 1 FROM gifts WHERE photo_ids @> ARRAY[p.id])
-		  AND NOT EXISTS (SELECT 1 FROM users WHERE avatar_id = p.id)
-		  AND NOT EXISTS (SELECT 1 FROM wishlists WHERE avatar_id = p.id)
-		ORDER BY p.created_at, p.id LIMIT 100
-	`)
-	if err != nil {
-		return 0, err
-	}
-	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	cutoff, err := dbTime(ctx, s.DB)
 	if err != nil {
 		return 0, err
 	}
 	var failures error
 	count := 0
-	for _, id := range ids {
-		deleted := false
-		err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-			var locked string
-			err := tx.QueryRow(ctx, `SELECT id FROM gift_photo_objects WHERE id = $1 FOR UPDATE SKIP LOCKED`, id).Scan(&locked)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			var referenced bool
-			err = tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM gifts WHERE photo_ids @> ARRAY[$1::text])
+	after := ""
+	for {
+		rows, err := s.DB.Query(ctx, `
+		SELECT p.id FROM gift_photo_objects p
+		WHERE p.created_at < $1::timestamptz - interval '1 hour' AND p.id > $2
+		  AND NOT EXISTS (SELECT 1 FROM gifts WHERE photo_ids @> ARRAY[p.id])
+		  AND NOT EXISTS (SELECT 1 FROM users WHERE avatar_id = p.id)
+		  AND NOT EXISTS (SELECT 1 FROM wishlists WHERE avatar_id = p.id)
+		ORDER BY p.id LIMIT 100
+	`, cutoff, after)
+		if err != nil {
+			return count, errors.Join(failures, err)
+		}
+		ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return count, errors.Join(failures, err)
+		}
+		for _, id := range ids {
+			deleted := false
+			err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+				var locked string
+				err := tx.QueryRow(ctx, `SELECT id FROM gift_photo_objects WHERE id = $1 FOR UPDATE SKIP LOCKED`, id).Scan(&locked)
+				if errors.Is(err, pgx.ErrNoRows) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				var referenced bool
+				err = tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM gifts WHERE photo_ids @> ARRAY[$1::text])
 				OR EXISTS (SELECT 1 FROM users WHERE avatar_id = $1)
 				OR EXISTS (SELECT 1 FROM wishlists WHERE avatar_id = $1)`, id).Scan(&referenced)
-			if err != nil || referenced {
+				if err != nil || referenced {
+					return err
+				}
+				if err := remove(ctx, id); err != nil {
+					return err
+				}
+				_, err = tx.Exec(ctx, `DELETE FROM gift_photo_objects WHERE id = $1`, id)
+				deleted = err == nil
 				return err
+			})
+			if err != nil {
+				failures = errors.Join(failures, err)
+				if ctx.Err() != nil {
+					return count, failures
+				}
+			} else if deleted {
+				count++
 			}
-			if err := remove(ctx, id); err != nil {
-				return err
-			}
-			_, err = tx.Exec(ctx, `DELETE FROM gift_photo_objects WHERE id = $1`, id)
-			deleted = err == nil
-			return err
-		})
-		if err != nil {
-			failures = errors.Join(failures, err)
-			if ctx.Err() != nil {
-				break
-			}
-		} else if deleted {
-			count++
 		}
+		if len(ids) < 100 {
+			return count, failures
+		}
+		after = ids[len(ids)-1]
 	}
-	return count, failures
 }

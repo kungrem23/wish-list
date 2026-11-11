@@ -1,10 +1,10 @@
 package httpapi
 
 import (
-	"context"
 	"net/http"
 
 	"wishlist/internal/accounts"
+	"wishlist/internal/photos"
 	"wishlist/internal/wishlists"
 )
 
@@ -118,7 +118,7 @@ func (a api) deleteAddress(w http.ResponseWriter, r *http.Request, userID int64)
 }
 
 func (a api) saveAvatar(w http.ResponseWriter, r *http.Request, userID int64) error {
-	err := a.uploadAvatar(w, r, func(id string, upload func(context.Context) error) error {
+	err := a.uploadAvatar(w, r, userID, func(id string, upload photos.Upload) error {
 		return a.accounts.SetAvatar(r.Context(), userID, id, upload)
 	})
 	if err != nil {

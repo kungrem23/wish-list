@@ -51,15 +51,13 @@ interface EventView extends SantaEvent {
 
 type InvitationLink = { invite_token: string }
 
-const loadEvents = (signal: AbortSignal) => request<SantaEvent[]>(eventsPath, { signal })
-
 export function SantaEventsPage() {
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const archived = params.get('tab') === 'archive'
   const [creating, setCreating] = useState(false)
-  const page = useResource(loadEvents)
-  const events = page.value?.filter((event) => event.closed === archived)
+  const page = usePagedResource<SantaEvent[]>(eventsPath + '?archived=' + archived)
+  const events = page.value
 
   return <section className="lists-page stack">
     <header className="row spread page-heading">
@@ -84,6 +82,7 @@ export function SantaEventsPage() {
         </Link>
       </li>)}
     </ul> : <p className="panel muted empty">{archived ? 'В архиве пока нет событий.' : 'У вас пока нет активных событий.'}</p>}
+    <PageButtons {...page} disabled={events === undefined} />
     {creating && <CreateEventDialog onClose={() => setCreating(false)} onCreate={(event) => {
       setCreating(false)
       navigate(eventPath(event.id), { state: { inviteToken: event.invite_token } })

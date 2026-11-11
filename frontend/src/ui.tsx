@@ -86,7 +86,9 @@ export function useResource<T>(load: (signal: AbortSignal) => Promise<T>) {
 }
 
 export function usePagedResource<T>(path: string) {
-  const [cursors, setCursors] = useState([''])
+  const [pagination, setPagination] = useState({ path, cursors: [''] })
+  const cursors = pagination.path === path ? pagination.cursors : ['']
+  const setCursors = (cursors: string[]) => setPagination({ path, cursors })
   const cursor = cursors[cursors.length - 1]
   const load = useCallback(async (signal: AbortSignal) => ({
     cursor, path,

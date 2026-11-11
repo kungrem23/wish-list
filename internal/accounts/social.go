@@ -182,12 +182,9 @@ func (s Store) HasAvatar(ctx context.Context, userID int64, id string) (bool, er
 	return exists, err
 }
 
-func (s Store) SetAvatar(ctx context.Context, userID int64, id string, upload func(context.Context) error) error {
+func (s Store) SetAvatar(ctx context.Context, userID int64, id string, upload photos.Upload) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-		if err := photos.LockUploads(ctx, tx, []string{id}); err != nil {
-			return err
-		}
-		if err := upload(ctx); err != nil {
+		if err := upload(ctx, tx); err != nil {
 			return err
 		}
 		_, err := tx.Exec(ctx, `UPDATE users SET avatar_id = $2 WHERE id = $1`, userID, id)

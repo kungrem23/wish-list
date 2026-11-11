@@ -24,6 +24,16 @@ func OpenDB(ctx context.Context) (*pgxpool.Pool, error) {
 		pool.Close()
 		return nil, errors.New("could not connect to PostgreSQL")
 	}
+	var privileged bool
+	err = pool.QueryRow(ctx, `SELECT rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls
+	    OR pg_has_role(current_user, 'pg_read_server_files', 'MEMBER')
+	    OR pg_has_role(current_user, 'pg_write_server_files', 'MEMBER')
+	    OR pg_has_role(current_user, 'pg_execute_server_program', 'MEMBER')
+	    FROM pg_roles WHERE rolname = current_user`).Scan(&privileged)
+	if err != nil || privileged {
+		pool.Close()
+		return nil, errors.New("DATABASE_URL must use a restricted application role without database administration or server file privileges")
+	}
 	return pool, nil
 }
 

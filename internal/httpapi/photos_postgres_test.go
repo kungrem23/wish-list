@@ -378,8 +378,8 @@ func TestPostgresWishlistAvatarsUseWishlistAccessAndCleanup(t *testing.T) {
 	must(t, err)
 	count, err = (wishlists.Store{DB: f.db}).RemoveUnusedPhotos(f.ctx, store.Delete)
 	must(t, err)
-	if count != 3 { // Rejected owner check, failed upload, and deleted avatar.
-		t.Fatalf("expected 3 abandoned objects, got %d", count)
+	if count != 2 { // Failed upload and deleted avatar; rejected owner checks create no objects.
+		t.Fatalf("expected 2 abandoned objects, got %d", count)
 	}
 	initialID := initial[strings.LastIndex(initial, "/")+1:]
 	obj, err := store.Get(f.ctx, initialID)

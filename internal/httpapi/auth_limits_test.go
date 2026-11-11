@@ -68,6 +68,27 @@ func TestClientKeyTrustsOnlyConfiguredProxy(t *testing.T) {
 	}
 }
 
+func TestTrustedProxyKeepsClientAuthBudgetsSeparate(t *testing.T) {
+	handler := HandlerWithTrustedProxy(nil, true, netip.MustParseAddr("127.0.0.1"))
+	call := func(client string) int {
+		r := httptest.NewRequest("POST", "/api/v1/register", strings.NewReader("{"))
+		r.RemoteAddr = "127.0.0.1:1234"
+		r.Header.Set("X-Real-IP", client)
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w.Code
+	}
+	for range authIPAttempts {
+		if code := call("192.0.2.1"); code != 400 {
+			t.Fatalf("unexpected status %d", code)
+		}
+	}
+	if call("192.0.2.1") != 429 || call("192.0.2.2") != 400 {
+		t.Fatal("trusted proxy shared authentication budgets")
+	}
+}
+
 func TestAuthCapacityAndWindowRecovery(t *testing.T) {
 	l := newAuthLimits(netip.Addr{})
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/login", nil)

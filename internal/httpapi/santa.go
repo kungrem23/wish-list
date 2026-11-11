@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"time"
 
 	"wishlist/internal/problem"
 	"wishlist/internal/santa"
@@ -61,11 +62,33 @@ func (a api) grantEndpoint(fn grantEndpoint) http.Handler {
 }
 
 func (a api) santaEvents(w http.ResponseWriter, r *http.Request, userID int64) error {
-	events, err := a.santa.List(r.Context(), userID)
+	cursor, err := readCursor[santa.Cursor](r)
+	if err != nil || cursor.ID < 0 || (cursor.ID == 0 && (cursor.Closed || cursor.Date != "")) {
+		return errCursor
+	}
+	if cursor.ID > 0 {
+		if date, err := time.Parse(time.DateOnly, cursor.Date); err != nil || date.Year() < 1 {
+			return errCursor
+		}
+	}
+	var archived *bool
+	if values, exists := r.URL.Query()["archived"]; exists {
+		if len(values) != 1 || (values[0] != "true" && values[0] != "false") {
+			return errCursor
+		}
+		value := values[0] == "true"
+		archived = &value
+		if cursor.ID > 0 && cursor.Closed != value {
+			return errCursor
+		}
+	}
+	events, err := a.santa.List(r.Context(), userID, archived, cursor, pageSize+1)
 	if err != nil {
 		return err
 	}
-	return writeJSON(w, http.StatusOK, events)
+	return writeJSON(w, http.StatusOK, page(w, events, func(e santa.Event) santa.Cursor {
+		return santa.Cursor{Closed: e.Closed, Date: e.ExchangeDate, ID: e.ID}
+	}))
 }
 
 func (a api) santaCreate(w http.ResponseWriter, r *http.Request, userID int64) error {
